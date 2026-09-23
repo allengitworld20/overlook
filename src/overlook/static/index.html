@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlook</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1a1d21; --muted: #626a75; --line: #dde1e6; --accent: #2456d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171b; --panel: #1c2026; --text: #e7eaee; --muted: #9aa3ae; --line: #2f353d; --accent: #6b93ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; }
+  header .status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  select, input[type=range] { accent-color: var(--accent); }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+  #map { min-height: 0; }
+  aside { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 8px 16px 24px; }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; }
+  .cats { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 4px; }
+  .cats label { color: var(--text); font-size: 12.5px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.item { padding: 7px 8px; margin: 0 -8px; border-radius: 6px; cursor: pointer; }
+  li.item:hover { background: var(--bg); }
+  li .sub { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); font-style: italic; }
+  .error { color: #c0392b; padding: 8px 0; }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Overlook</h1>
+  <label>Window
+    <select id="days">
+      <option value="7">7 days</option>
+      <option value="14">14 days</option>
+      <option value="30" selected>30 days</option>
+      <option value="90">90 days</option>
+    </select>
+  </label>
+  <label>Min severity <input id="sev" type="range" min="0" max="1" step="0.05" value="0"> <span id="sevVal">0.00</span></label>
+  <label><input id="links" type="checkbox"> Show links</label>
+  <span class="status" id="status"></span>
+</header>
+<main>
+  <div id="map" role="application" aria-label="Event map"></div>
+  <aside>
+    <h2>Categories</h2>
+    <div class="cats" id="cats"></div>
+    <h2>Volume anomalies</h2>
+    <ul id="anomalies"></ul>
+    <h2>Clusters</h2>
+    <ul id="clusters"></ul>
+    <h2>Most connected events</h2>
+    <ul id="hotspots"></ul>
+  </aside>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const COLORS = {
+  earthquake: "#d97706", wildfire: "#dc2626", storm: "#2563eb", volcano: "#7c3aed",
+  flood: "#0891b2", drought: "#a16207", landslide: "#65a30d", disease: "#db2777", other: "#6b7280",
+};
+const EVENT_LIMIT = 5000; // matches the API's maximum
+const state = { events: [], graph: null, hidden: new Set() };
+
+// Feed text is untrusted: everything inserted into HTML goes through esc(), and
+// links are only emitted for http(s) URLs.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : null);
+const day = (iso) => iso.slice(0, 10);
+
+const map = L.map("map", { worldCopyJump: true }).setView([20, 0], 2);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 18, attribution: "&copy; OpenStreetMap contributors",
+}).addTo(map);
+const eventLayer = L.layerGroup().addTo(map);
+const clusterLayer = L.layerGroup().addTo(map);
+const linkLayer = L.layerGroup();
+
+async function api(path, params = {}) {
+  const res = await fetch(path + "?" + new URLSearchParams(params));
+  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  return res.json();
+}
+
+function drawEvents() {
+  eventLayer.clearLayers();
+  for (const e of state.events) {
+    if (e.lat == null || state.hidden.has(e.category)) continue;
+    const marker = L.circleMarker([e.lat, e.lon], {
+      radius: 4 + 10 * e.severity, color: COLORS[e.category] || COLORS.other,
+      weight: 1, fillOpacity: 0.55,
+    });
+    const url = safeUrl(e.url);
+    marker.bindPopup(
+      `<strong>${esc(e.title)}</strong><br>${esc(e.category)} &middot; ${esc(e.time.replace("T", " ").slice(0, 16))} UTC` +
+      (e.summary ? `<br>${esc(e.summary)}` : "") +
+      (url ? `<br><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Source</a>` : "")
+    );
+    marker.addTo(eventLayer);
+  }
+}
+
+function drawLinks() {
+  linkLayer.clearLayers();
+  if (!state.graph) return;
+  const pos = new Map(state.graph.nodes.filter((n) => n.lat != null).map((n) => [n.id, [n.lat, n.lon]]));
+  for (const e of state.graph.edges) {
+    if (pos.has(e.source) && pos.has(e.target)) {
+      L.polyline([pos.get(e.source), pos.get(e.target)], {
+        color: e.type.includes("textual") ? "#db2777" : "#888", weight: 1, opacity: 0.5,
+      }).addTo(linkLayer);
+    }
+  }
+}
+
+function fill(id, items, render) {
+  const ul = document.getElementById(id);
+  ul.innerHTML = items.length ? items.map(render).join("") : '<li class="empty">None in this window</li>';
+  return ul;
+}
+
+function drawSidebar(anomalies, clusters, graph) {
+  fill("anomalies", anomalies.slice(0, 8), (a) =>
+    `<li class="item"><span class="dot" style="background:${COLORS[a.category] || COLORS.other}"></span> <strong>${esc(a.category)}</strong> ${esc(a.date)}` +
+    `<div class="sub">${a.count} events vs. baseline ${a.baseline.toFixed(0)} (score ${a.score})</div></li>`);
+
+  clusterLayer.clearLayers();
+  const top = clusters.slice(0, 10);
+  const ul = fill("clusters", top, (c, i) =>
+    `<li class="item" data-i="${i}"><span class="dot" style="background:${COLORS[c.category] || COLORS.other}"></span> ${esc(c.label)}` +
+    `<div class="sub">${esc(day(c.start))} to ${esc(day(c.end))} &middot; mean severity ${c.mean_severity}</div></li>`);
+  top.forEach((c) => L.circle([c.lat, c.lon], {
+    radius: c.radius_km * 1000, color: COLORS[c.category] || COLORS.other, weight: 2, fill: false, dashArray: "4 4",
+  }).addTo(clusterLayer));
+  ul.querySelectorAll("li[data-i]").forEach((li) =>
+    li.addEventListener("click", () => { const c = top[li.dataset.i]; map.flyTo([c.lat, c.lon], 5); }));
+
+  const hot = graph.hotspots.slice(0, 8);
+  const hul = fill("hotspots", hot, (n, i) =>
+    `<li class="item" data-i="${i}"><span class="dot" style="background:${COLORS[n.category] || COLORS.other}"></span> ${esc(n.title)}` +
+    `<div class="sub">${n.degree} links, group ${n.community < 0 ? "none" : n.community + 1}</div></li>`);
+  hul.querySelectorAll("li[data-i]").forEach((li) =>
+    li.addEventListener("click", () => { const n = hot[li.dataset.i]; if (n.lat != null) map.flyTo([n.lat, n.lon], 6); }));
+}
+
+function drawCategoryToggles() {
+  const box = document.getElementById("cats");
+  box.innerHTML = Object.entries(COLORS).map(([cat, color]) =>
+    `<label><input type="checkbox" data-cat="${cat}" checked><span class="dot" style="background:${color}"></span>${cat}</label>`).join("");
+  box.addEventListener("change", (ev) => {
+    const { cat } = ev.target.dataset;
+    ev.target.checked ? state.hidden.delete(cat) : state.hidden.add(cat);
+    drawEvents();
+  });
+}
+
+async function refresh() {
+  const days = document.getElementById("days").value;
+  const min_severity = document.getElementById("sev").value;
+  const statusEl = document.getElementById("status");
+  try {
+    const [status, events, anomalies, clusters, graph] = await Promise.all([
+      api("/api/status"),
+      api("/api/events", { days, min_severity, limit: EVENT_LIMIT }),
+      api("/api/anomalies", { days }),
+      api("/api/clusters", { days }),
+      api("/api/graph", { days }),
+    ]);
+    state.events = events.events;
+    state.graph = graph;
+    drawEvents();
+    drawLinks();
+    drawSidebar(anomalies.anomalies, clusters.clusters, graph);
+    const last = status.last_ingest ? status.last_ingest.replace("T", " ").slice(0, 16) + " UTC" : "never";
+    const capped = events.count >= EVENT_LIMIT ? " (newest only; raise min severity to narrow)" : "";
+    statusEl.textContent = `${events.count} events shown${capped} · last ingest ${last}`;
+  } catch (err) {
+    statusEl.innerHTML = `<span class="error">${esc(err.message)}</span>`;
+  }
+}
+
+document.getElementById("days").addEventListener("change", refresh);
+document.getElementById("sev").addEventListener("input", (e) => { document.getElementById("sevVal").textContent = Number(e.target.value).toFixed(2); });
+document.getElementById("sev").addEventListener("change", refresh);
+document.getElementById("links").addEventListener("change", (e) => {
+  e.target.checked ? linkLayer.addTo(map) : map.removeLayer(linkLayer);
+});
+drawCategoryToggles();
+refresh();
+</script>
+</body>
+</html>
