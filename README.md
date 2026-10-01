@@ -8,7 +8,10 @@ answers three questions an analyst actually asks:
 2. **What belongs together?** Spatio-temporal clustering (aftershock sequences, fire complexes).
 3. **What is connected to what?** An event graph with communities and hotspots, linking events by proximity and by text similarity.
 
-Everything is served through a small API and a map UI.
+Everything is served through a small API and a browser UI with two views: a
+3D globe (globe.gl on three.js) and a 2D Leaflet map.
+
+![Overlook globe view: events as coloured spikes on a 3D Earth, with anomalies and clusters in the sidebar](docs/globe.png)
 
 > Independent personal project built on public data only. It is inspired by the
 > kind of decision-support problem described in Booz Allen's Summer Games
@@ -25,7 +28,7 @@ python3 -m venv .venv
 
 .venv/bin/overlook ingest        # pull USGS, NASA EONET and WHO into data/overlook.db
 .venv/bin/overlook report        # anomalies, clusters, hotspots in the terminal
-.venv/bin/overlook serve         # map UI + API at http://127.0.0.1:8000
+.venv/bin/overlook serve         # globe/map UI + API at http://127.0.0.1:8000
 
 .venv/bin/python -m pytest       # 43 tests, no network needed
 ```
@@ -60,7 +63,7 @@ flowchart LR
         N3[graph: proximity + TF-IDF, communities]
     end
     AN --> API[FastAPI]
-    API --> UI[Leaflet map UI]
+    API --> UI[Globe + map UI]
     API --> CLI[CLI report]
 ```
 
@@ -119,7 +122,7 @@ src/overlook/
   analysis/       anomaly.py, clustering.py, graph.py
   api.py          FastAPI app
   cli.py          ingest / report / serve
-  static/         Leaflet map UI (single HTML file)
+  static/         browser UI: 3D globe (globe.gl) and 2D Leaflet map views, one HTML file
 tests/            parsers, geo, db, analysis, API
 ```
 
@@ -129,4 +132,4 @@ tests/            parsers, geo, db, analysis, API
 - WHO events sit at country centroids, so they show country-level location only.
 - Severity is normalized within each source and is not comparable across categories; cluster ranking is a heuristic.
 - EONET clusters are labeled with coordinates because EONET has no place names.
-- The map UI has not been tested in browsers other than headless Chrome.
+- The UI has only been checked in Chrome. The globe view needs WebGL; the map view does not.

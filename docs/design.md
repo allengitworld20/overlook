@@ -45,7 +45,7 @@ Non-functional
 ## Architecture
 
 Ingest (parse + fetch) -> SQLite -> analysis (pure functions over `list[Event]`)
--> FastAPI -> Leaflet UI / CLI. Parsers are pure so they are tested against
+-> FastAPI -> globe (globe.gl) and Leaflet map UI / CLI. Parsers are pure so they are tested against
 recorded payloads without a network; analysis functions take plain event lists so
 they are tested with synthetic data.
 

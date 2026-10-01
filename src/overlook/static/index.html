@@ -6,42 +6,75 @@
 <title>Overlook</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
+  /* One deliberate look: a globe in space reads best on a dark ground. */
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --text: #1a1d21; --muted: #626a75; --line: #dde1e6; --accent: #2456d6;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #14171b; --panel: #1c2026; --text: #e7eaee; --muted: #9aa3ae; --line: #2f353d; --accent: #6b93ff; }
+    --bg: #05070b; --panel: rgba(14, 18, 25, 0.86); --panel-solid: #0e1219; --text: #e6eaf0; --muted: #8f9aa8;
+    --line: rgba(255, 255, 255, 0.09); --accent: #7aa7ff; --hover: rgba(255, 255, 255, 0.06);
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
-  header h1 { margin: 0; font-size: 17px; }
-  header .status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  html, body { height: 100%; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 10px 16px; background: var(--panel-solid); border-bottom: 1px solid var(--line); position: relative; z-index: 1001; }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .01em; }
+  header .status { color: var(--muted); font-size: 12px; margin-left: auto; flex: 1 1 180px; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
-  select, input[type=range] { accent-color: var(--accent); }
-  select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  select, input[type=range], input[type=checkbox] { accent-color: var(--accent); }
+  select { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 13px; background: none; color: var(--muted); border: 0; padding: 4px 12px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #07101f; font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   main { flex: 1; display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
-  #map { min-height: 0; }
-  aside { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 8px 16px 24px; }
+  #stage { position: relative; min-height: 0; overflow: hidden; }
+  #globe, #map { position: absolute; inset: 0; }
+  #globe { cursor: grab; }
+  #globe:active { cursor: grabbing; }
+  aside { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel-solid); padding: 8px 16px 24px; }
   aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; }
   .cats { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 4px; }
   .cats label { color: var(--text); font-size: 12.5px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
   ul { list-style: none; margin: 0; padding: 0; }
   li.item { padding: 7px 8px; margin: 0 -8px; border-radius: 6px; cursor: pointer; }
-  li.item:hover { background: var(--bg); }
+  li.item:hover, li.item:focus-visible { background: var(--hover); outline: none; }
   li .sub { color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); font-style: italic; }
-  .error { color: #c0392b; padding: 8px 0; }
+  .error { color: #ff8a80; }
+  .hint { position: absolute; left: 14px; bottom: 12px; color: var(--muted); font-size: 12px; pointer-events: none; text-shadow: 0 1px 2px #000; z-index: 500; }
+  [data-view="map"] .globe-only { display: none; }
+  [data-view="map"] .hint { color: #333; text-shadow: 0 0 3px #fff; bottom: 24px; }
+
+  /* Hover tooltip (globe.gl renders labels into its own floating div) */
+  .tip { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: 12.5px/1.4 system-ui, sans-serif; color: var(--text); max-width: 280px; backdrop-filter: blur(6px); }
+  .tip .sub { color: var(--muted); }
+  .leaflet-tooltip.tip { white-space: normal; box-shadow: none; }
+  .leaflet-tooltip.tip::before { display: none; }
+
+  /* Details card for a clicked event (shared by both views) */
+  #card { position: absolute; left: 14px; top: 14px; z-index: 1000; width: min(340px, calc(100% - 28px)); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; backdrop-filter: blur(8px); box-shadow: 0 8px 30px rgba(0, 0, 0, .5); }
+  [data-view="map"] #card { left: 58px; }
+  #card h3 { margin: 0 28px 4px 0; font-size: 14.5px; line-height: 1.3; }
+  #card .meta { color: var(--muted); font-size: 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  #card p { margin: 0 0 6px; font-size: 13px; }
+  #card a { color: var(--accent); font-size: 13px; }
+  #card button { position: absolute; top: 8px; right: 8px; background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+  #card button:hover { background: var(--hover); color: var(--text); }
+
   @media (max-width: 800px) {
-    main { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; }
+    main { grid-template-columns: 1fr; grid-template-rows: 58vh 1fr; }
     aside { border-left: 0; border-top: 1px solid var(--line); }
   }
 </style>
 </head>
-<body>
+<body data-view="globe">
 <header>
   <h1>Overlook</h1>
+  <div class="seg" role="group" aria-label="View">
+    <button type="button" data-view="globe" aria-pressed="true">Globe</button>
+    <button type="button" data-view="map" aria-pressed="false">Map</button>
+  </div>
   <label>Window
     <select id="days">
       <option value="7">7 days</option>
@@ -52,10 +85,17 @@
   </label>
   <label>Min severity <input id="sev" type="range" min="0" max="1" step="0.05" value="0"> <span id="sevVal">0.00</span></label>
   <label><input id="links" type="checkbox"> Show links</label>
-  <span class="status" id="status"></span>
+  <label class="globe-only"><input id="night" type="checkbox"> Night view</label>
+  <label class="globe-only"><input id="spin" type="checkbox" checked> Spin</label>
+  <span class="status" id="status">Loading…</span>
 </header>
 <main>
-  <div id="map" role="application" aria-label="Event map"></div>
+  <div id="stage">
+    <div id="globe" role="application" aria-label="Interactive globe of events. Drag to rotate, scroll to zoom."></div>
+    <div id="map" role="application" aria-label="Event map" hidden></div>
+    <div id="card" hidden></div>
+    <div class="hint" id="hint"></div>
+  </div>
   <aside>
     <h2>Categories</h2>
     <div class="cats" id="cats"></div>
@@ -71,61 +111,223 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const COLORS = {
-  earthquake: "#d97706", wildfire: "#dc2626", storm: "#2563eb", volcano: "#7c3aed",
-  flood: "#0891b2", drought: "#a16207", landslide: "#65a30d", disease: "#db2777", other: "#6b7280",
+  earthquake: "#f59e0b", wildfire: "#ef4444", storm: "#3b82f6", volcano: "#a855f7",
+  flood: "#06b6d4", drought: "#ca8a04", landslide: "#84cc16", disease: "#ec4899", other: "#9ca3af",
 };
+const GLOBE_JS = "https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js";
+const IMG = "https://cdn.jsdelivr.net/npm/three-globe@2.45.3/example/img/";
 const EVENT_LIMIT = 5000; // matches the API's maximum
-const state = { events: [], graph: null, hidden: new Set() };
+const KM_PER_DEG = 111.32;
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const state = { events: [], graph: null, clusters: [], hidden: new Set(), view: null };
 
 // Feed text is untrusted: everything inserted into HTML goes through esc(), and
 // links are only emitted for http(s) URLs.
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : null);
 const day = (iso) => iso.slice(0, 10);
+const when = (iso) => iso.replace("T", " ").slice(0, 16) + " UTC";
+const colorOf = (cat) => COLORS[cat] || COLORS.other;
+const withAlpha = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+};
+const tipHtml = (title, sub) => `<div class="tip"><strong>${esc(title)}</strong><div class="sub">${esc(sub)}</div></div>`;
 
-const map = L.map("map", { worldCopyJump: true }).setView([20, 0], 2);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 18, attribution: "&copy; OpenStreetMap contributors",
-}).addTo(map);
-const eventLayer = L.layerGroup().addTo(map);
-const clusterLayer = L.layerGroup().addTo(map);
-const linkLayer = L.layerGroup();
+// ---------- What each view draws (the sidebar and data are shared) ----------
+const visibleEvents = () => state.events.filter((e) => e.lat != null && !state.hidden.has(e.category));
+const topClusters = () => state.clusters.slice(0, 10).filter((c) => !state.hidden.has(c.category));
+function graphLinks() {
+  if (!document.getElementById("links").checked || !state.graph) return [];
+  const pos = new Map(state.graph.nodes.filter((n) => n.lat != null).map((n) => [n.id, n]));
+  return state.graph.edges
+    .filter((e) => pos.has(e.source) && pos.has(e.target))
+    .map((e) => {
+      const a = pos.get(e.source), b = pos.get(e.target);
+      return { sLat: a.lat, sLon: a.lon, eLat: b.lat, eLon: b.lon, textual: e.type.includes("textual") };
+    });
+}
 
+// Points on a small circle of `radiusKm` around a centre, for cluster outlines on
+// the globe. Uses the spherical "destination point" formula so circles stay true.
+function circlePath(lat, lon, radiusKm, steps = 64) {
+  const d = radiusKm / 6371.0088, la = lat * Math.PI / 180, lo = lon * Math.PI / 180, pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const b = (2 * Math.PI * i) / steps;
+    const la2 = Math.asin(Math.sin(la) * Math.cos(d) + Math.cos(la) * Math.sin(d) * Math.cos(b));
+    const lo2 = lo + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la), Math.cos(d) - Math.sin(la) * Math.sin(la2));
+    pts.push([la2 * 180 / Math.PI, ((lo2 * 180 / Math.PI + 540) % 360) - 180]);
+  }
+  return pts;
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error("could not load " + src));
+    document.head.appendChild(s);
+  });
+}
+
+// ---------- Map view (Leaflet, 2-D) ----------
+const mapView = {
+  el: document.getElementById("map"),
+  hint: "Drag to pan · scroll to zoom · click a dot for details",
+  ready: null,
+  init() {
+    this.map = L.map(this.el, { worldCopyJump: true }).setView([20, 0], 2);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18, attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(this.map);
+    this.events = L.layerGroup().addTo(this.map);
+    this.clusters = L.layerGroup().addTo(this.map);
+    this.links = L.layerGroup().addTo(this.map);
+    return Promise.resolve();
+  },
+  drawEvents() {
+    this.events.clearLayers();
+    for (const e of visibleEvents()) {
+      L.circleMarker([e.lat, e.lon], {
+        radius: 4 + 10 * e.severity, color: colorOf(e.category), weight: 1, fillOpacity: 0.55,
+      })
+        .bindTooltip(tipHtml(e.title, `${e.category} · ${when(e.time)}`), { className: "tip", direction: "top" })
+        .on("click", () => showCard(e))
+        .addTo(this.events);
+    }
+  },
+  drawClusters() {
+    this.clusters.clearLayers();
+    for (const c of topClusters()) {
+      L.circle([c.lat, c.lon], { radius: c.radius_km * 1000, color: colorOf(c.category), weight: 2, fill: false, dashArray: "4 4" })
+        .bindTooltip(tipHtml(c.label, `${day(c.start)} to ${day(c.end)}`), { className: "tip" })
+        .addTo(this.clusters);
+    }
+  },
+  drawLinks() {
+    this.links.clearLayers();
+    for (const a of graphLinks()) {
+      L.polyline([[a.sLat, a.sLon], [a.eLat, a.eLon]], { color: a.textual ? "#ec4899" : "#666", weight: 1, opacity: 0.6 }).addTo(this.links);
+    }
+  },
+  flyTo(lat, lon, km) {
+    const zoom = Math.max(3, Math.min(8, Math.round(9 - Math.log2(Math.max(km, 25) / 50))));
+    this.map.flyTo([lat, lon], zoom, { animate: !reducedMotion });
+  },
+  show() { this.el.hidden = false; this.map.invalidateSize(); },
+  hide() { this.el.hidden = true; },
+};
+
+// ---------- Globe view (globe.gl on three.js, 3-D) ----------
+const globeView = {
+  el: document.getElementById("globe"),
+  hint: "Drag to rotate · scroll to zoom · click a dot for details",
+  ready: null,
+  async init() {
+    await loadScript(GLOBE_JS);
+    const g = Globe({ animateIn: !reducedMotion })(this.el)
+      .globeImageUrl(IMG + (document.getElementById("night").checked ? "earth-night.jpg" : "earth-blue-marble.jpg"))
+      .bumpImageUrl(IMG + "earth-topology.png")
+      .backgroundImageUrl(IMG + "night-sky.png")
+      .showAtmosphere(true).atmosphereColor("#7fb2ff").atmosphereAltitude(0.17)
+      // Events: short spikes, taller and wider for higher severity.
+      .pointLat("lat").pointLng("lon")
+      .pointColor((e) => colorOf(e.category))
+      .pointAltitude((e) => 0.006 + 0.07 * e.severity)
+      .pointRadius((e) => 0.18 + 0.32 * e.severity)
+      .pointResolution(8)
+      .pointLabel((e) => tipHtml(e.title, `${e.category} · ${when(e.time)}`))
+      .onPointClick((e) => showCard(e))
+      // Cluster extents: true-scale outlines plus a pulse at the centre.
+      .pathPoints("points").pathPointLat((p) => p[0]).pathPointLng((p) => p[1])
+      .pathColor((c) => withAlpha(colorOf(c.category), 0.9)).pathStroke(1.4)
+      .pathDashLength(0.02).pathDashGap(0.012).pathTransitionDuration(0)
+      .pathLabel((c) => tipHtml(c.label, `${day(c.start)} to ${day(c.end)}`))
+      .ringLat("lat").ringLng("lon")
+      .ringColor((c) => (t) => withAlpha(colorOf(c.category), 0.85 * (1 - t)))
+      .ringMaxRadius((c) => Math.max(1.2, c.radius_km / KM_PER_DEG))
+      .ringPropagationSpeed(1.2).ringRepeatPeriod(1600)
+      // Graph links: arcs over the surface.
+      .arcStartLat("sLat").arcStartLng("sLon").arcEndLat("eLat").arcEndLng("eLon")
+      .arcColor((a) => a.textual ? ["rgba(236,72,153,0.25)", "rgba(236,72,153,0.9)"] : ["rgba(255,255,255,0.15)", "rgba(255,255,255,0.7)"])
+      .arcStroke(0.35).arcAltitudeAutoScale(0.35)
+      .arcDashLength(0.4).arcDashGap(0.2).arcDashAnimateTime(reducedMotion ? 0 : 4000);
+    this.g = g;
+    const controls = g.controls();
+    controls.autoRotate = !reducedMotion && document.getElementById("spin").checked;
+    controls.autoRotateSpeed = 0.35;
+    document.getElementById("spin").checked = controls.autoRotate;
+    // Stop spinning once someone grabs the globe; the checkbox turns it back on.
+    controls.addEventListener("start", () => this.setSpin(false));
+    g.pointOfView({ lat: 20, lng: 10, altitude: 2.3 });
+    const fit = () => { if (!this.el.hidden) g.width(this.el.clientWidth).height(this.el.clientHeight); };
+    new ResizeObserver(fit).observe(this.el);
+    fit();
+  },
+  setSpin(on) { this.g.controls().autoRotate = on; document.getElementById("spin").checked = on; },
+  drawEvents() { this.g.pointsData(visibleEvents()); },
+  drawClusters() {
+    const top = topClusters();
+    this.g.pathsData(top.map((c) => ({ ...c, points: circlePath(c.lat, c.lon, c.radius_km) })));
+    this.g.ringsData(reducedMotion ? [] : top);
+  },
+  drawLinks() { this.g.arcsData(graphLinks()); },
+  flyTo(lat, lon, km) {
+    this.setSpin(false);
+    this.g.pointOfView({ lat, lng: lon, altitude: Math.min(1.6, Math.max(0.45, km / 700)) }, reducedMotion ? 0 : 1600);
+  },
+  show() { this.el.hidden = false; this.g.width(this.el.clientWidth).height(this.el.clientHeight); this.g.resumeAnimation(); },
+  hide() { this.el.hidden = true; if (this.g) this.g.pauseAnimation(); },
+};
+
+const VIEWS = { map: mapView, globe: globeView };
+const current = () => VIEWS[state.view];
+// Only the visible view is redrawn; the other catches up when it's switched to.
+const redraw = (...what) => { const v = current(); if (v && v.ready) what.forEach((w) => v[w]()); };
+
+async function setView(name) {
+  if (!VIEWS[name]) name = "globe";
+  if (state.view === name) return;
+  const prev = current();
+  state.view = name;
+  document.body.dataset.view = name;
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
+  document.getElementById("hint").textContent = VIEWS[name].hint;
+  try { localStorage.setItem("overlook:view", name); } catch (e) {}
+  try { history.replaceState(null, "", "#" + name); } catch (e) {}
+  if (prev) prev.hide();
+  const v = VIEWS[name];
+  try {
+    if (!v.ready) { v.el.hidden = false; await v.init(); v.ready = true; }
+    if (state.view !== name) return; // switched again while loading
+    v.show();
+    redraw("drawEvents", "drawClusters", "drawLinks");
+  } catch (err) {
+    v.el.hidden = false;
+    v.el.innerHTML = `<p class="error" style="padding:16px">${name === "globe" ? "The globe needs WebGL, which this browser didn't provide" : "The map failed to load"} (${esc(err.message)}). Try the other view; the sidebar still works.</p>`;
+  }
+}
+
+function flyTo(lat, lon, km) { const v = current(); if (v && v.ready) v.flyTo(lat, lon, km); }
+
+function showCard(e) {
+  const card = document.getElementById("card");
+  const url = safeUrl(e.url);
+  card.innerHTML =
+    `<button type="button" aria-label="Close details">×</button>` +
+    `<h3>${esc(e.title)}</h3>` +
+    `<div class="meta"><span class="dot" style="background:${colorOf(e.category)}"></span>${esc(e.category)} · ${esc(when(e.time))} · severity ${Number(e.severity).toFixed(2)}</div>` +
+    (e.summary ? `<p>${esc(e.summary)}</p>` : "") +
+    (url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Source ↗</a>` : "");
+  card.hidden = false;
+  card.querySelector("button").addEventListener("click", () => { card.hidden = true; });
+  flyTo(e.lat, e.lon, 100);
+}
+
+// ---------- Data and sidebar ----------
 async function api(path, params = {}) {
   const res = await fetch(path + "?" + new URLSearchParams(params));
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
   return res.json();
-}
-
-function drawEvents() {
-  eventLayer.clearLayers();
-  for (const e of state.events) {
-    if (e.lat == null || state.hidden.has(e.category)) continue;
-    const marker = L.circleMarker([e.lat, e.lon], {
-      radius: 4 + 10 * e.severity, color: COLORS[e.category] || COLORS.other,
-      weight: 1, fillOpacity: 0.55,
-    });
-    const url = safeUrl(e.url);
-    marker.bindPopup(
-      `<strong>${esc(e.title)}</strong><br>${esc(e.category)} &middot; ${esc(e.time.replace("T", " ").slice(0, 16))} UTC` +
-      (e.summary ? `<br>${esc(e.summary)}` : "") +
-      (url ? `<br><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Source</a>` : "")
-    );
-    marker.addTo(eventLayer);
-  }
-}
-
-function drawLinks() {
-  linkLayer.clearLayers();
-  if (!state.graph) return;
-  const pos = new Map(state.graph.nodes.filter((n) => n.lat != null).map((n) => [n.id, [n.lat, n.lon]]));
-  for (const e of state.graph.edges) {
-    if (pos.has(e.source) && pos.has(e.target)) {
-      L.polyline([pos.get(e.source), pos.get(e.target)], {
-        color: e.type.includes("textual") ? "#db2777" : "#888", weight: 1, opacity: 0.5,
-      }).addTo(linkLayer);
-    }
-  }
 }
 
 function fill(id, items, render) {
@@ -134,28 +336,36 @@ function fill(id, items, render) {
   return ul;
 }
 
+function onActivate(li, fn) {
+  li.tabIndex = 0;
+  li.addEventListener("click", fn);
+  li.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); } });
+}
+
 function drawSidebar(anomalies, clusters, graph) {
   fill("anomalies", anomalies.slice(0, 8), (a) =>
-    `<li class="item"><span class="dot" style="background:${COLORS[a.category] || COLORS.other}"></span> <strong>${esc(a.category)}</strong> ${esc(a.date)}` +
+    `<li class="item"><span class="dot" style="background:${colorOf(a.category)}"></span> <strong>${esc(a.category)}</strong> ${esc(a.date)}` +
     `<div class="sub">${a.count} events vs. baseline ${a.baseline.toFixed(0)} (score ${a.score})</div></li>`);
 
-  clusterLayer.clearLayers();
   const top = clusters.slice(0, 10);
   const ul = fill("clusters", top, (c, i) =>
-    `<li class="item" data-i="${i}"><span class="dot" style="background:${COLORS[c.category] || COLORS.other}"></span> ${esc(c.label)}` +
+    `<li class="item" data-i="${i}"><span class="dot" style="background:${colorOf(c.category)}"></span> ${esc(c.label)}` +
     `<div class="sub">${esc(day(c.start))} to ${esc(day(c.end))} &middot; mean severity ${c.mean_severity}</div></li>`);
-  top.forEach((c) => L.circle([c.lat, c.lon], {
-    radius: c.radius_km * 1000, color: COLORS[c.category] || COLORS.other, weight: 2, fill: false, dashArray: "4 4",
-  }).addTo(clusterLayer));
-  ul.querySelectorAll("li[data-i]").forEach((li) =>
-    li.addEventListener("click", () => { const c = top[li.dataset.i]; map.flyTo([c.lat, c.lon], 5); }));
+  ul.querySelectorAll("li[data-i]").forEach((li) => onActivate(li, () => {
+    const c = top[li.dataset.i];
+    flyTo(c.lat, c.lon, c.radius_km);
+  }));
 
   const hot = graph.hotspots.slice(0, 8);
   const hul = fill("hotspots", hot, (n, i) =>
-    `<li class="item" data-i="${i}"><span class="dot" style="background:${COLORS[n.category] || COLORS.other}"></span> ${esc(n.title)}` +
+    `<li class="item" data-i="${i}"><span class="dot" style="background:${colorOf(n.category)}"></span> ${esc(n.title)}` +
     `<div class="sub">${n.degree} links, group ${n.community < 0 ? "none" : n.community + 1}</div></li>`);
-  hul.querySelectorAll("li[data-i]").forEach((li) =>
-    li.addEventListener("click", () => { const n = hot[li.dataset.i]; if (n.lat != null) map.flyTo([n.lat, n.lon], 6); }));
+  hul.querySelectorAll("li[data-i]").forEach((li) => onActivate(li, () => {
+    const n = hot[li.dataset.i];
+    const ev = state.events.find((e) => e.id === n.id);
+    if (ev && ev.lat != null) showCard(ev);
+    else if (n.lat != null) flyTo(n.lat, n.lon, 200);
+  }));
 }
 
 function drawCategoryToggles() {
@@ -165,7 +375,7 @@ function drawCategoryToggles() {
   box.addEventListener("change", (ev) => {
     const { cat } = ev.target.dataset;
     ev.target.checked ? state.hidden.delete(cat) : state.hidden.add(cat);
-    drawEvents();
+    redraw("drawEvents", "drawClusters");
   });
 }
 
@@ -183,10 +393,10 @@ async function refresh() {
     ]);
     state.events = events.events;
     state.graph = graph;
-    drawEvents();
-    drawLinks();
+    state.clusters = clusters.clusters;
+    redraw("drawEvents", "drawClusters", "drawLinks");
     drawSidebar(anomalies.anomalies, clusters.clusters, graph);
-    const last = status.last_ingest ? status.last_ingest.replace("T", " ").slice(0, 16) + " UTC" : "never";
+    const last = status.last_ingest ? when(status.last_ingest) : "never";
     const capped = events.count >= EVENT_LIMIT ? " (newest only; raise min severity to narrow)" : "";
     statusEl.textContent = `${events.count} events shown${capped} · last ingest ${last}`;
   } catch (err) {
@@ -194,13 +404,21 @@ async function refresh() {
   }
 }
 
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
 document.getElementById("days").addEventListener("change", refresh);
 document.getElementById("sev").addEventListener("input", (e) => { document.getElementById("sevVal").textContent = Number(e.target.value).toFixed(2); });
 document.getElementById("sev").addEventListener("change", refresh);
-document.getElementById("links").addEventListener("change", (e) => {
-  e.target.checked ? linkLayer.addTo(map) : map.removeLayer(linkLayer);
+document.getElementById("links").addEventListener("change", () => redraw("drawLinks"));
+document.getElementById("night").addEventListener("change", (e) => {
+  if (globeView.ready) globeView.g.globeImageUrl(IMG + (e.target.checked ? "earth-night.jpg" : "earth-blue-marble.jpg"));
 });
+document.getElementById("spin").addEventListener("change", (e) => { if (globeView.ready) globeView.setSpin(e.target.checked); });
+if (reducedMotion) document.getElementById("spin").checked = false;
+
+let initial = location.hash.slice(1);
+if (!VIEWS[initial]) { try { initial = localStorage.getItem("overlook:view") || "globe"; } catch (e) { initial = "globe"; } }
 drawCategoryToggles();
+setView(initial);
 refresh();
 </script>
 </body>
