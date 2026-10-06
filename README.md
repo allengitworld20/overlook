@@ -13,10 +13,7 @@ Everything is served through a small API and a browser UI with two views: a
 
 ![Overlook globe view: events as coloured spikes on a 3D Earth, with anomalies and clusters in the sidebar](docs/globe.png)
 
-> Independent personal project built on public data only. It is inspired by the
-> kind of decision-support problem described in Booz Allen's Summer Games
-> posting (tracking real-time and open-source information about developing
-> situations). It is not affiliated with or endorsed by Booz Allen.
+> Independent personal project built on public data only.
 
 ## Quickstart
 
